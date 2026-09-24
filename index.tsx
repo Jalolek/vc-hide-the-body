@@ -182,11 +182,25 @@ function positionOverlay() {
 
     const target = document.querySelector<HTMLElement>(`div.${MessagesClasses.messagesWrapper}`);
     if (!target) return;
-    const r = target.getBoundingClientRect();
-    overlayContainer.style.left = `${r.left}px`;
-    overlayContainer.style.top = `${r.top}px`;
-    overlayContainer.style.width = `${r.width}px`;
-    overlayContainer.style.height = `${r.height}px`;
+    const t = target.getBoundingClientRect();
+    let { left } = t, { top } = t, { right } = t, { bottom } = t;
+
+    // Also cover the message input bar so it can't be seen or used behind the gate
+    const composer = document.querySelector<HTMLElement>('[class*="channelTextArea"]');
+    if (composer) {
+        const c = composer.getBoundingClientRect();
+        if (c.width > 0 && c.height > 0) {
+            left = Math.min(left, c.left);
+            top = Math.min(top, c.top);
+            right = Math.max(right, c.right);
+            bottom = Math.max(bottom, c.bottom);
+        }
+    }
+
+    overlayContainer.style.left = `${left}px`;
+    overlayContainer.style.top = `${top}px`;
+    overlayContainer.style.width = `${right - left}px`;
+    overlayContainer.style.height = `${bottom - top}px`;
 }
 
 function hideOverlay() {
