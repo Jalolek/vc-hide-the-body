@@ -1,0 +1,40 @@
+.vc-htb-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.vc-htb-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.vc-htb-meta {
+    font-size: 12px;
+    opacity: .7;
+}
+
+.vc-htb-warnicon {
+    color: var(--status-danger);
+}
+
+.vc-htb-warnbox {
+    background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+    border: 1px solid var(--status-danger);
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: var(--status-danger);
+    font-weight: 600;
+}
+
+[class*="modeMuted"]:has(.vc-htb-warnicon) {
+    background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+    border-radius: 4px;
+}
+
+[class*="modeMuted"]:has(.vc-htb-warnicon) [class*="channelName"],
+[class*="modeMuted"]:has(.vc-htb-warnicon) [class*="channelName"] * {
+    color: var(--status-danger);
+    font-weight: 700;
+}
