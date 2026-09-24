@@ -449,15 +449,20 @@ function showViewGate(channelId: string, revert: boolean) {
 // the channel is never opened in the first place (no flash, no revert).
 function onDocumentClick(event: MouseEvent) {
     try {
+        if (event.button !== 0) return;
         const target = event.target as HTMLElement | null;
-        // Never interfere with modals, menus or other popout UI (channel
-        // settings, context menus, etc)
-        if (target?.closest?.('[role="dialog"], [aria-modal="true"], [role="menu"]')) return;
+        if (!target) return;
 
-        const item = target?.closest?.("[data-list-item-id]") as HTMLElement | null;
+        // Never interfere with modals, menus, popouts or other layered UI
+        // (channel settings, context menus, etc)
+        if (target.closest('[role="dialog"], [aria-modal="true"], [role="menu"], [role="menuitem"], [class*="layer_"], [class*="popout"]')) return;
+
+        const item = target.closest("[data-list-item-id]") as HTMLElement | null;
         if (!item) return;
 
-        // Only actual channel-list entries, not arbitrary list items
+        // Only actual channel-list entries in the left sidebar, not arbitrary
+        // list items elsewhere in the app
+        if (!item.closest('[class*="sidebar_"]')) return;
         const raw = item.getAttribute("data-list-item-id") ?? "";
         if (!raw.startsWith("channels___") && !raw.startsWith("private-channels-")) return;
 
