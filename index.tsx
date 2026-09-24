@@ -132,15 +132,25 @@ function navigateToChannel(channelId: string) {
 let overlayRoot: ReturnType<typeof createRoot> | null = null;
 let overlayContainer: HTMLDivElement | null = null;
 
+function lockMessages() {
+    document.documentElement.classList.add("vc-htb-locked");
+}
+
+function unlockMessages() {
+    document.documentElement.classList.remove("vc-htb-locked");
+}
+
 function hideOverlay() {
     overlayRoot?.unmount();
     overlayRoot = null;
     overlayContainer?.remove();
     overlayContainer = null;
+    unlockMessages();
 }
 
 function showOverlay(content: React.ReactNode) {
     hideOverlay();
+    lockMessages();
     overlayContainer = document.createElement("div");
     document.body.appendChild(overlayContainer);
     overlayRoot = createRoot(overlayContainer);

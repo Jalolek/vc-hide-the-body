@@ -38,8 +38,13 @@
     justify-content: center;
     gap: 12px;
     padding: 24px;
-    background: var(--background-primary);
+    background: var(--background-primary, #313338);
     text-align: center;
+}
+
+html.vc-htb-locked [class*="chatContent"],
+html.vc-htb-locked [class*="messagesWrapper"] {
+    visibility: hidden;
 }
 
 .vc-htb-gate-icon {
