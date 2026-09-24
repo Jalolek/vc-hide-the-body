@@ -10,20 +10,18 @@ import { addMessagePreSendListener, type MessageSendListener,removeMessagePreSen
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Paragraph } from "@components/Paragraph";
 import { classNameFactory } from "@utils/css";
-import { Logger } from "@utils/Logger";
 import { classes } from "@utils/misc";
 import definePlugin from "@utils/types";
-import { findCssClassesLazy } from "@webpack";
-import { ConfirmModal, FluxDispatcher, openModal } from "@webpack/common";
+import { findByPropsLazy, findCssClassesLazy } from "@webpack";
+import { ChannelRouter, ConfirmModal, FluxDispatcher, openModal, SelectedChannelStore } from "@webpack/common";
 import type { ReactNode } from "react";
 
 import { channelLabel, gatedForRow, shouldConfirmSend, shouldConfirmView, shouldConfirmVoice } from "./gates";
 import { settings } from "./settings";
 
-const logger = new Logger("HideTheBody");
-
 const cl = classNameFactory("vc-htb-");
 const ChannelListClasses = findCssClassesLazy("icon");
+const VoiceActions = findByPropsLazy("selectVoiceChannel", "selectChannel");
 
 const WarningIcon = ErrorBoundary.wrap(() => (
     <svg
@@ -54,8 +52,7 @@ interface GateOptions {
 const pendingGateKeys = new Set<string>();
 
 /**
- * Returns true if the caller should block the action (modal is up or about to be).
- * Returns false when the modal could not be shown, so callers must NOT block.
+ * Returns true when the modal opened (or is already open), false when it could not be shown.
  */
 function showGate({ key, title, confirmText, body, onOk, onKo }: GateOptions): boolean {
     if (pendingGateKeys.has(key)) return true;
@@ -90,86 +87,104 @@ function showGate({ key, title, confirmText, body, onOk, onKo }: GateOptions): b
     }
 }
 
-interface ReplayState {
-    type: string;
-    channelId: string;
-    ref: unknown;
+interface PrevChannel {
+    guildId: string | null;
+    channelId: string | null;
 }
 
-let replay: ReplayState | null = null;
+let lastChannel: PrevChannel = { guildId: null, channelId: null };
+let viewArmedChannel: string | null = null;
+let currentViewModalChannel: string | null = null;
 
-function armReplay(type: string, channelId: string, ref: unknown) {
-    replay = { type, channelId, ref };
-    setTimeout(() => {
-        if (replay?.ref === ref) replay = null;
-    }, 5000);
-}
-
-function replayDispatch(type: string, channelId: string, action: any) {
-    armReplay(type, channelId, action);
-    setTimeout(() => {
-        try {
-            void FluxDispatcher.dispatch(action);
-        } catch (err) {
-            logger.error("Failed to dispatch gated action", err);
-        }
-    }, 0);
-}
-
-// Allow the startup restore select/voice to pass once without gating
-let booted = false;
-
-function fluxInterceptor(action: any): boolean {
+function navigateToChannel(channelId: string) {
     try {
-        if (action == null || typeof action !== "object") return true;
-
-        const { type, channelId } = action;
-        if (typeof channelId !== "string") return true;
-
-        // Quiet pass for the action we re-dispatch after confirming
-        if (replay != null && type === replay.type && channelId === replay.channelId) {
-            replay = null;
-            return true;
-        }
-
-        switch (type) {
-            case "CHANNEL_SELECT": {
-                if (!booted) {
-                    booted = true;
-                    return true;
-                }
-                if (!shouldConfirmView(channelId)) return true;
-
-                const block = showGate({
-                    key: `view:${channelId}`,
-                    title: `View ${channelLabel(channelId)}?`,
-                    confirmText: "View",
-                    body: <Paragraph>This channel needs confirmation every time you open it.</Paragraph>,
-                    onOk: () => replayDispatch(type, channelId, action)
-                });
-                return !block;
-            }
-            case "VOICE_CHANNEL_SELECT": {
-                if (!booted) {
-                    booted = true;
-                    return true;
-                }
-                if (!shouldConfirmVoice(channelId)) return true;
-
-                const block = showGate({
-                    key: `voice:${channelId}`,
-                    title: `Join ${channelLabel(channelId)}?`,
-                    confirmText: "Join",
-                    body: <Paragraph>This voice channel needs confirmation every time you join.</Paragraph>,
-                    onOk: () => replayDispatch(type, channelId, action)
-                });
-                return !block;
-            }
-            default:
-                return true;
-        }
+        ChannelRouter.transitionToChannel(channelId);
     } catch {
-        return true;
+        // ignore navigation failures
+    }
+}
+
+function onChannelSelect(event: { guildId: string | null; channelId: string | null }) {
+    try {
+        const channelId = event?.channelId;
+        if (typeof channelId !== "string") return;
+
+        const prevChannelId = lastChannel.channelId;
+        lastChannel = { guildId: event?.guildId ?? null, channelId };
+
+        if (viewArmedChannel === channelId) {
+            viewArmedChannel = null;
+            return;
+        }
+        if (currentViewModalChannel === channelId) return;
+        if (!shouldConfirmView(channelId)) return;
+
+        currentViewModalChannel = channelId;
+        setTimeout(() => {
+            showGate({
+                key: `view:${channelId}`,
+                title: `View ${channelLabel(channelId)}?`,
+                confirmText: "View",
+                body: <Paragraph>This channel needs confirmation every time you open it.</Paragraph>,
+                onOk: () => {
+                    if (currentViewModalChannel === channelId) currentViewModalChannel = null;
+                },
+                onKo: () => {
+                    if (currentViewModalChannel === channelId) currentViewModalChannel = null;
+                    if (prevChannelId != null && prevChannelId !== channelId) {
+                        viewArmedChannel = prevChannelId;
+                        navigateToChannel(prevChannelId);
+                    }
+                }
+            });
+        }, 0);
+    } catch {
+        currentViewModalChannel = null;
+    }
+}
+
+let voiceArmedChannel: string | null = null;
+let currentVoiceModalChannel: string | null = null;
+
+function leaveVoice() {
+    try {
+        void VoiceActions.selectVoiceChannel(null);
+    } catch {
+        // ignore
+    }
+}
+
+function onVoiceChannelSelect(event: { channelId: string | null }) {
+    try {
+        const channelId = event?.channelId;
+        if (typeof channelId !== "string") return;
+
+        if (voiceArmedChannel === channelId) {
+            voiceArmedChannel = null;
+            return;
+        }
+        if (SelectedChannelStore.getVoiceChannelId() === channelId) return;
+        if (currentVoiceModalChannel === channelId) return;
+        if (!shouldConfirmVoice(channelId)) return;
+
+        currentVoiceModalChannel = channelId;
+        setTimeout(() => {
+            showGate({
+                key: `voice:${channelId}`,
+                title: `Join ${channelLabel(channelId)}?`,
+                confirmText: "Join",
+                body: <Paragraph>This voice channel needs confirmation every time you join.</Paragraph>,
+                onOk: () => {
+                    if (currentVoiceModalChannel === channelId) currentVoiceModalChannel = null;
+                },
+                onKo: () => {
+                    if (currentVoiceModalChannel === channelId) currentVoiceModalChannel = null;
+                    leaveVoice();
+                }
+            });
+        }, 0);
+    } catch {
+        currentVoiceModalChannel = null;
     }
 }
 
@@ -217,21 +232,33 @@ export default definePlugin({
     ],
 
     start() {
-        if (!settings.store.dmGateMigrated) {
-            settings.store.confirmDms = false;
-            settings.store.dmGateMigrated = true;
+        if (!settings.store.fullResetMigrated) {
+            for (const [key, def] of Object.entries(settings.def)) {
+                if (Object.hasOwn(def, "default")) {
+                    (settings.store as any)[key] = (def as any).default;
+                }
+            }
+            settings.store.fullResetMigrated = true;
         }
-        FluxDispatcher.addInterceptor(fluxInterceptor);
+
+        lastChannel = {
+            guildId: null,
+            channelId: SelectedChannelStore.getChannelId() ?? null
+        };
+
+        FluxDispatcher.subscribe("CHANNEL_SELECT", onChannelSelect);
+        FluxDispatcher.subscribe("VOICE_CHANNEL_SELECT", onVoiceChannelSelect);
         this.preSend = addMessagePreSendListener(sendListener);
     },
 
     stop() {
-        const interceptors = (FluxDispatcher as any)._interceptors ?? [];
-        const index = interceptors.indexOf(fluxInterceptor);
-        if (index !== -1) interceptors.splice(index, 1);
+        FluxDispatcher.unsubscribe("CHANNEL_SELECT", onChannelSelect);
+        FluxDispatcher.unsubscribe("VOICE_CHANNEL_SELECT", onVoiceChannelSelect);
         if (this.preSend) removeMessagePreSendListener(this.preSend);
         pendingGateKeys.clear();
         pendingSend = false;
+        currentViewModalChannel = null;
+        currentVoiceModalChannel = null;
     },
 
     isGatedRow(channel: any): boolean {

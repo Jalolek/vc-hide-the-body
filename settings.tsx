@@ -143,6 +143,11 @@ export const settings = definePluginSettings({
         default: false,
         description: "Internal: resets the legacy all-DMs default once"
     },
+    fullResetMigrated:{
+        type: OptionType.BOOLEAN,
+        default: false,
+        description: "Internal: resets all settings to defaults once"
+    },
     confirmVoice: {
         type: OptionType.BOOLEAN,
         default: true,
