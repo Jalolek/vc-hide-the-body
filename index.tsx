@@ -436,10 +436,17 @@ function showViewGate(channelId: string, revert: boolean) {
 function onDocumentClick(event: MouseEvent) {
     try {
         const target = event.target as HTMLElement | null;
+        // Never interfere with modals, menus or other popout UI (channel
+        // settings, context menus, etc)
+        if (target?.closest?.('[role="dialog"], [aria-modal="true"], [role="menu"]')) return;
+
         const item = target?.closest?.("[data-list-item-id]") as HTMLElement | null;
         if (!item) return;
 
+        // Only actual channel-list entries, not arbitrary list items
         const raw = item.getAttribute("data-list-item-id") ?? "";
+        if (!raw.startsWith("channels___") && !raw.startsWith("private-channels-")) return;
+
         const match = raw.match(/(\d+)$/);
         if (!match) return;
 
