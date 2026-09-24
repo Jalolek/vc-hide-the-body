@@ -80,20 +80,20 @@ function gatesOn(): boolean {
 export function viewGated(channelId: string): boolean {
     const s = settings.store;
     if (!s.confirmView) return false;
+    if (toSet(s.viewChannels).has(channelId)) return true;
     const ch = getChannel(channelId);
     if (!ch) return false;
     if (isDMish(ch)) return s.confirmDms;
-    if (toSet(s.viewChannels).has(channelId)) return true;
     return ch.guild_id != null && toSet(s.viewGuilds).has(ch.guild_id);
 }
 
 export function sendGated(channelId: string): boolean {
     const s = settings.store;
     if (!s.confirmSend) return false;
+    if (toSet(s.sendChannels).has(channelId)) return true;
     const ch = getChannel(channelId);
     if (!ch) return false;
     if (isDMish(ch)) return s.confirmDms;
-    if (toSet(s.sendChannels).has(channelId)) return true;
     return ch.guild_id != null && toSet(s.sendGuilds).has(ch.guild_id);
 }
 

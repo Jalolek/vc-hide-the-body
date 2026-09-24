@@ -135,7 +135,7 @@ export const settings = definePluginSettings({
     },
     confirmDms: {
         type: OptionType.BOOLEAN,
-        default: true,
+        default: false,
         description: "Confirm before opening or sending in DMs"
     },
     confirmVoice: {
