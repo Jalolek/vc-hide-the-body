@@ -205,6 +205,8 @@ function hideOverlay() {
 function showOverlay(content: React.ReactNode, mode: "messages" | "guild" = "messages") {
     hideOverlay();
     lockMessages();
+    // Drop focus so the composer can't be typed into or submitted behind the gate
+    (document.activeElement as HTMLElement | null)?.blur?.();
     overlayMode = mode;
     overlayContainer = document.createElement("div");
     overlayContainer.className = cl("gate-wrap");
@@ -214,6 +216,23 @@ function showOverlay(content: React.ReactNode, mode: "messages" | "guild" = "mes
     positionOverlay();
     overlayPositionTimer = window.setInterval(positionOverlay, 250);
     window.addEventListener("resize", positionOverlay);
+}
+
+// True while a view/server gate overlay is covering the app
+function gateOverlayActive(): boolean {
+    return overlayContainer != null;
+}
+
+// Block Enter on the message editor while a gate is up so nothing is sent
+function onDocumentKeyDown(event: KeyboardEvent) {
+    if (event.key !== "Enter" || event.isComposing) return;
+    if (!gateOverlayActive()) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest?.('[contenteditable="true"]')) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+    }
 }
 
 function GateScreen({ label, sub, confirmText = "View Channel", onView, onCancel }: { label: string; sub?: string; confirmText?: string; onView(): void; onCancel(): void; }) {
@@ -495,6 +514,8 @@ function onVoiceChannelSelect(event: { channelId: string | null }) {
 let pendingSend = false;
 
 const sendListener: MessageSendListener = (channelId, _message, _options, _props) => {
+    // Never let a message go out while a view/server gate is covering the app
+    if (gateOverlayActive()) return { cancel: true };
     if (!shouldConfirmSend(channelId)) return;
     if (pendingSend) return { cancel: true };
     pendingSend = true;
@@ -554,6 +575,7 @@ export default definePlugin({
         FluxDispatcher.subscribe("CHANNEL_SELECT", onChannelSelect);
         FluxDispatcher.subscribe("VOICE_CHANNEL_SELECT", onVoiceChannelSelect);
         document.addEventListener("click", onDocumentClick, true);
+        document.addEventListener("keydown", onDocumentKeyDown, true);
         this.preSend = addMessagePreSendListener(sendListener);
         updateGuildGate();
         this.guildTimer = window.setInterval(updateGuildGate, 300);
@@ -563,6 +585,7 @@ export default definePlugin({
         FluxDispatcher.unsubscribe("CHANNEL_SELECT", onChannelSelect);
         FluxDispatcher.unsubscribe("VOICE_CHANNEL_SELECT", onVoiceChannelSelect);
         document.removeEventListener("click", onDocumentClick, true);
+        document.removeEventListener("keydown", onDocumentKeyDown, true);
         if (this.preSend) removeMessagePreSendListener(this.preSend);
         if (this.guildTimer != null) clearInterval(this.guildTimer);
         pendingGateKeys.clear();

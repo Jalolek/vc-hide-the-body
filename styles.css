@@ -51,6 +51,15 @@ html.vc-htb-locked [class*="messagesWrapper"] {
     visibility: hidden;
 }
 
+html.vc-htb-locked [class*="channelTextArea"] {
+    pointer-events: none;
+    opacity: .5;
+}
+
+html.vc-htb-locked [class*="channelTextArea"] [contenteditable="true"] {
+    caret-color: transparent;
+}
+
 .vc-htb-gate-icon {
     color: var(--status-danger);
 }
