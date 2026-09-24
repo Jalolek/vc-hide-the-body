@@ -10,17 +10,19 @@ import { ApplicationStreamingStore, ChannelStore, UserStore, VoiceStateStore } f
 
 import { settings } from "./settings";
 
-function parseList(raw: string): Set<string> {
+function parseList(raw: unknown): Set<string> {
+    if (typeof raw !== "string") return new Set();
     return new Set(raw.split(/[\s,;\n]+/).filter(Boolean));
 }
 
 const parseCache = new Map<string, Set<string>>();
 
-function toSet(raw: string): Set<string> {
-    let set = parseCache.get(raw);
+function toSet(raw: unknown): Set<string> {
+    const key = typeof raw === "string" ? raw : "";
+    let set = parseCache.get(key);
     if (!set) {
-        set = parseList(raw);
-        parseCache.set(raw, set);
+        set = parseList(key);
+        parseCache.set(key, set);
     }
     return set;
 }
@@ -72,7 +74,7 @@ function bypassActive(): boolean {
 }
 
 function gatesOn(): boolean {
-    return settings.store.enabled && !bypassActive();
+    return settings.store.gatesEnabled && !bypassActive();
 }
 
 export function viewGated(channelId: string): boolean {

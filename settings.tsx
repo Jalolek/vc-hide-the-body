@@ -90,7 +90,7 @@ function GatePanel() {
 }
 
 export const settings = definePluginSettings({
-    enabled: {
+    gatesEnabled: {
         type: OptionType.BOOLEAN,
         default: true,
         description: "Enable all gates"
