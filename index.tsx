@@ -95,6 +95,7 @@ interface PrevChannel {
 
 let lastChannel: PrevChannel = { guildId: null, channelId: null };
 let viewGate: { channelId: string } | null = null;
+let safeChannel: PrevChannel | null = null;
 
 const armedView = new Map<string, number>();
 
@@ -124,6 +125,15 @@ function navigateToChannel(channelId: string) {
             // ignore navigation failures
         }
     }, 0);
+}
+
+// Last channel the user could be on without passing a gate. Never a gated
+// channel, so Cancel/revert can't silently reveal gated content.
+function safeTarget(): string | null {
+    for (const id of [safeChannel?.channelId, lastChannel.channelId]) {
+        if (id && !shouldConfirmView(id)) return id;
+    }
+    return null;
 }
 
 // ---- Opaque, NSFW-style gate overlay covering just the messages container ----
@@ -218,15 +228,16 @@ function onChannelSelect(event: { guildId: string | null; channelId: string | nu
 
         if (!shouldConfirmView(channelId)) {
             lastChannel = { guildId: event?.guildId ?? null, channelId };
+            safeChannel = { guildId: event?.guildId ?? null, channelId };
             return;
         }
 
         if (viewGate?.channelId === channelId) return;
 
-        const prevChannelId = lastChannel.channelId ?? null;
+        const prevChannelId = safeTarget();
         viewGate = { channelId };
 
-        // Never open the gated channel itself; stay on the previous one
+        // Never open the gated channel itself; stay on the last safe channel
         if (prevChannelId != null && prevChannelId !== channelId) {
             armView(prevChannelId);
             navigateToChannel(prevChannelId);
@@ -245,12 +256,14 @@ function onChannelSelect(event: { guildId: string | null; channelId: string | nu
                     navigateToChannel(channelId);
                 }}
                 onCancel={() => {
-                    if (viewGate?.channelId === channelId) viewGate = null;
-                    hideOverlay();
-                    if (prevChannelId != null && prevChannelId !== channelId) {
-                        armView(prevChannelId);
-                        navigateToChannel(prevChannelId);
+                    const back = safeTarget();
+                    if (back != null && back !== channelId) {
+                        if (viewGate?.channelId === channelId) viewGate = null;
+                        hideOverlay();
+                        armView(back);
+                        navigateToChannel(back);
                     }
+                    // else: nowhere safe to return to, keep the gate up
                 }}
             />
         );
@@ -362,10 +375,11 @@ export default definePlugin({
             settings.store.fullResetMigrated = true;
         }
 
-        lastChannel = {
-            guildId: null,
-            channelId: SelectedChannelStore.getChannelId() ?? null
-        };
+        const current = SelectedChannelStore.getChannelId() ?? null;
+        lastChannel = { guildId: null, channelId: current };
+        safeChannel = current != null && !shouldConfirmView(current)
+            ? { guildId: null, channelId: current }
+            : null;
 
         FluxDispatcher.subscribe("CHANNEL_SELECT", onChannelSelect);
         FluxDispatcher.subscribe("VOICE_CHANNEL_SELECT", onVoiceChannelSelect);
@@ -379,6 +393,7 @@ export default definePlugin({
         pendingGateKeys.clear();
         pendingSend = false;
         viewGate = null;
+        safeChannel = null;
         currentVoiceModalChannel = null;
         hideOverlay();
     },
