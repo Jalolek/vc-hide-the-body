@@ -10,6 +10,7 @@ import { addMessagePreSendListener, type MessageSendListener,removeMessagePreSen
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Paragraph } from "@components/Paragraph";
 import { classNameFactory } from "@utils/css";
+import { Logger } from "@utils/Logger";
 import { classes } from "@utils/misc";
 import definePlugin from "@utils/types";
 import { findCssClassesLazy } from "@webpack";
@@ -19,8 +20,10 @@ import type { ReactNode } from "react";
 import { channelLabel, gatedForRow, shouldConfirmSend, shouldConfirmView, shouldConfirmVoice } from "./gates";
 import { settings } from "./settings";
 
+const logger = new Logger("HideTheBody");
+
 const cl = classNameFactory("vc-htb-");
-const ChannelListClasses = findCssClassesLazy("modeSelected", "modeMuted", "unread", "icon");
+const ChannelListClasses = findCssClassesLazy("icon");
 
 const WarningIcon = ErrorBoundary.wrap(() => (
     <svg
@@ -102,6 +105,17 @@ function armReplay(type: string, channelId: string, ref: unknown) {
     }, 5000);
 }
 
+function replayDispatch(type: string, channelId: string, action: any) {
+    armReplay(type, channelId, action);
+    setTimeout(() => {
+        try {
+            void FluxDispatcher.dispatch(action);
+        } catch (err) {
+            logger.error("Failed to dispatch gated action", err);
+        }
+    }, 0);
+}
+
 // Allow the startup restore select/voice to pass once without gating
 let booted = false;
 
@@ -131,10 +145,7 @@ function fluxInterceptor(action: any): boolean {
                     title: `View ${channelLabel(channelId)}?`,
                     confirmText: "View",
                     body: <Paragraph>This channel needs confirmation every time you open it.</Paragraph>,
-                    onOk: () => {
-                        armReplay(type, channelId, action);
-                        void FluxDispatcher.dispatch(action);
-                    }
+                    onOk: () => replayDispatch(type, channelId, action)
                 });
                 return !block;
             }
@@ -150,10 +161,7 @@ function fluxInterceptor(action: any): boolean {
                     title: `Join ${channelLabel(channelId)}?`,
                     confirmText: "Join",
                     body: <Paragraph>This voice channel needs confirmation every time you join.</Paragraph>,
-                    onOk: () => {
-                        armReplay(type, channelId, action);
-                        void FluxDispatcher.dispatch(action);
-                    }
+                    onOk: () => replayDispatch(type, channelId, action)
                 });
                 return !block;
             }
@@ -205,17 +213,14 @@ export default definePlugin({
                 match: /(?<=(\i)\.isNSFW\(\);)switch\(\i\.type\).{0,15}\.GUILD_ANNOUNCEMENT/,
                 replace: (m, channel) => `if($self.isGatedRow(${channel}))return $self.WarningIcon;${m}`
             }
-        },
-        {
-            find: "UNREAD_IMPORTANT:",
-            replacement: {
-                match: /Children\.count.+?;(?=return\(0,\i\.jsxs?\)\(\i\.\i,{focusTarget:)(?<={channel:(\i),name:\i,muted:(\i).+?;)/,
-                replace: (m, channel, muted) => `${m}${muted}=$self.isGatedRow(${channel})?true:${muted};`
-            }
         }
     ],
 
     start() {
+        if (!settings.store.dmGateMigrated) {
+            settings.store.confirmDms = false;
+            settings.store.dmGateMigrated = true;
+        }
         FluxDispatcher.addInterceptor(fluxInterceptor);
         this.preSend = addMessagePreSendListener(sendListener);
     },

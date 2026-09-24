@@ -28,13 +28,13 @@
     font-weight: 600;
 }
 
-[class*="modeMuted"]:has(.vc-htb-warnicon) {
-    background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+[class*="containerDefault"]:has(.vc-htb-warnicon) {
+    background: color-mix(in srgb, var(--status-danger) 8%, transparent);
     border-radius: 4px;
 }
 
-[class*="modeMuted"]:has(.vc-htb-warnicon) [class*="channelName"],
-[class*="modeMuted"]:has(.vc-htb-warnicon) [class*="channelName"] * {
+[class*="containerDefault"]:has(.vc-htb-warnicon) [class*="channelName"],
+[class*="containerDefault"]:has(.vc-htb-warnicon) [class*="channelName"] * {
     color: var(--status-danger);
     font-weight: 700;
 }

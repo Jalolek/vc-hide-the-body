@@ -136,7 +136,12 @@ export const settings = definePluginSettings({
     confirmDms: {
         type: OptionType.BOOLEAN,
         default: false,
-        description: "Confirm before opening or sending in DMs"
+        description: "Confirm before opening or sending in ALL DMs (specific DMs can still be gated by channel ID below)"
+    },
+    dmGateMigrated: {
+        type: OptionType.BOOLEAN,
+        default: false,
+        description: "Internal: resets the legacy all-DMs default once"
     },
     confirmVoice: {
         type: OptionType.BOOLEAN,
