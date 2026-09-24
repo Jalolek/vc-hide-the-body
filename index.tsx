@@ -460,9 +460,6 @@ function onDocumentClick(event: MouseEvent) {
         const item = target.closest("[data-list-item-id]") as HTMLElement | null;
         if (!item) return;
 
-        // Only actual channel-list entries in the left sidebar, not arbitrary
-        // list items elsewhere in the app
-        if (!item.closest('[class*="sidebar_"]')) return;
         const raw = item.getAttribute("data-list-item-id") ?? "";
         if (!raw.startsWith("channels___") && !raw.startsWith("private-channels-")) return;
 
@@ -483,6 +480,34 @@ function onDocumentClick(event: MouseEvent) {
         }
 
         showViewGate(channelId, false);
+    } catch {
+        // ignore
+    }
+}
+
+// Right-clicking a channel in Discord selects it, which would reveal a gated
+// channel and bounce us away before the context menu can be used. Stop the
+// selection on gated rows while leaving the context menu itself intact.
+function onDocumentMouseDown(event: MouseEvent) {
+    if (event.button !== 2) return;
+    try {
+        const target = event.target as HTMLElement | null;
+        if (!target) return;
+        const item = target.closest("[data-list-item-id]") as HTMLElement | null;
+        if (!item) return;
+
+        const raw = item.getAttribute("data-list-item-id") ?? "";
+        if (!raw.startsWith("channels___") && !raw.startsWith("private-channels-")) return;
+
+        const match = raw.match(/(\d+)$/);
+        if (!match) return;
+
+        const channelId = match[1];
+        if (isVoiceish(getChannel(channelId))) return;
+        if (!channelBlocked(channelId)) return;
+
+        event.preventDefault();
+        event.stopPropagation();
     } catch {
         // ignore
     }
@@ -601,6 +626,7 @@ export default definePlugin({
         FluxDispatcher.subscribe("CHANNEL_SELECT", onChannelSelect);
         FluxDispatcher.subscribe("VOICE_CHANNEL_SELECT", onVoiceChannelSelect);
         document.addEventListener("click", onDocumentClick, true);
+        document.addEventListener("mousedown", onDocumentMouseDown, true);
         document.addEventListener("keydown", onDocumentKeyDown, true);
         this.preSend = addMessagePreSendListener(sendListener);
         updateGuildGate();
@@ -611,6 +637,7 @@ export default definePlugin({
         FluxDispatcher.unsubscribe("CHANNEL_SELECT", onChannelSelect);
         FluxDispatcher.unsubscribe("VOICE_CHANNEL_SELECT", onVoiceChannelSelect);
         document.removeEventListener("click", onDocumentClick, true);
+        document.removeEventListener("mousedown", onDocumentMouseDown, true);
         document.removeEventListener("keydown", onDocumentKeyDown, true);
         if (this.preSend) removeMessagePreSendListener(this.preSend);
         if (this.guildTimer != null) clearInterval(this.guildTimer);
