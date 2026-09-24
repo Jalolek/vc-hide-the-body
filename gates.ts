@@ -106,6 +106,14 @@ export function shouldConfirmView(channelId: string): boolean {
     return gatesOn() && viewGated(channelId);
 }
 
+export function guildViewGated(guildId: string | null | undefined): boolean {
+    const s = settings.store;
+    if (!s.confirmView) return false;
+    if (!guildId) return false;
+    if (toSet(s.viewGuilds).has(guildId)) return true;
+    return folderGated(guildId, s.viewFolders);
+}
+
 export function shouldConfirmSend(channelId: string): boolean {
     return gatesOn() && sendGated(channelId);
 }

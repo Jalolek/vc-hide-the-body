@@ -14,9 +14,9 @@ import { classNameFactory } from "@utils/css";
 import { classes } from "@utils/misc";
 import definePlugin from "@utils/types";
 import { findByPropsLazy, findCssClassesLazy } from "@webpack";
-import { ChannelRouter, ConfirmModal, createRoot, FluxDispatcher, openModal, SelectedChannelStore } from "@webpack/common";
+import { ChannelRouter, ConfirmModal, createRoot, FluxDispatcher, GuildStore, openModal, SelectedChannelStore, SelectedGuildStore } from "@webpack/common";
 
-import { channelLabel, gatedForRow, getChannel, isVoiceish, shouldConfirmSend, shouldConfirmView, shouldConfirmVoice } from "./gates";
+import { channelLabel, gatedForRow, getChannel, guildViewGated, isVoiceish, shouldConfirmSend, shouldConfirmView, shouldConfirmVoice } from "./gates";
 import { settings } from "./settings";
 
 const cl = classNameFactory("vc-htb-");
@@ -131,16 +131,19 @@ function navigateToChannel(channelId: string) {
 // channel, so Cancel/revert can't silently reveal gated content.
 function safeTarget(): string | null {
     for (const id of [safeChannel?.channelId, lastChannel.channelId]) {
-        if (id && !shouldConfirmView(id)) return id;
+        if (id && !channelBlocked(id)) return id;
     }
     return null;
 }
 
-// ---- Opaque, NSFW-style gate overlay covering just the messages container ----
+// ---- Opaque, NSFW-style gate overlay ----
+// "messages" covers just the message list of the current channel.
+// "guild" covers the whole server (channel list, chat, members, input bar).
 
 let overlayRoot: ReturnType<typeof createRoot> | null = null;
 let overlayContainer: HTMLDivElement | null = null;
 let overlayPositionTimer: number | null = null;
+let overlayMode: "messages" | "guild" = "messages";
 
 function lockMessages() {
     document.documentElement.classList.add("vc-htb-locked");
@@ -150,8 +153,33 @@ function unlockMessages() {
     document.documentElement.classList.remove("vc-htb-locked");
 }
 
+function guildAreaLeft(): number {
+    const rail = document.querySelector<HTMLElement>('[class*="guilds_"]')
+        ?? document.querySelector<HTMLElement>('[class*="guilds"]');
+    if (rail) {
+        const r = rail.getBoundingClientRect();
+        if (r.width > 0 && r.right > 0) return r.right;
+    }
+    const sidebar = document.querySelector<HTMLElement>('[class*="sidebar_"]');
+    if (sidebar) {
+        const r = sidebar.getBoundingClientRect();
+        if (r.width > 0) return r.left;
+    }
+    return 0;
+}
+
 function positionOverlay() {
     if (!overlayContainer) return;
+
+    if (overlayMode === "guild") {
+        const left = guildAreaLeft();
+        overlayContainer.style.left = `${left}px`;
+        overlayContainer.style.top = "0px";
+        overlayContainer.style.width = `${Math.max(0, window.innerWidth - left)}px`;
+        overlayContainer.style.height = `${window.innerHeight}px`;
+        return;
+    }
+
     const target = document.querySelector<HTMLElement>(`div.${MessagesClasses.messagesWrapper}`);
     if (!target) return;
     const r = target.getBoundingClientRect();
@@ -174,9 +202,10 @@ function hideOverlay() {
     unlockMessages();
 }
 
-function showOverlay(content: React.ReactNode) {
+function showOverlay(content: React.ReactNode, mode: "messages" | "guild" = "messages") {
     hideOverlay();
     lockMessages();
+    overlayMode = mode;
     overlayContainer = document.createElement("div");
     overlayContainer.className = cl("gate-wrap");
     document.body.appendChild(overlayContainer);
@@ -187,17 +216,17 @@ function showOverlay(content: React.ReactNode) {
     window.addEventListener("resize", positionOverlay);
 }
 
-function GateScreen({ label, onView, onCancel }: { label: string; onView(): void; onCancel(): void }) {
+function GateScreen({ label, sub, confirmText = "View Channel", onView, onCancel }: { label: string; sub?: string; confirmText?: string; onView(): void; onCancel(): void; }) {
     return (
         <div className={cl("gate")}>
             <svg className={cl("gate-icon")} height="48" width="48" viewBox="0 0 24 24" aria-hidden={true} role="img">
                 <path fill="currentColor" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2V9h2v5z" />
             </svg>
             <div className={cl("gate-title")}>View {label}?</div>
-            <div className={cl("gate-sub")}>This channel needs confirmation before opening.</div>
+            <div className={cl("gate-sub")}>{sub ?? "This channel needs confirmation before opening."}</div>
             <div className={cl("row")}>
                 <Button variant="dangerPrimary" onClick={onView}>
-                    View Channel
+                    {confirmText}
                 </Button>
                 <Button variant="secondary" onClick={onCancel}>
                     Cancel
@@ -213,6 +242,7 @@ function onChannelSelect(event: { guildId: string | null; channelId: string | nu
         if (typeof channelId !== "string") return;
 
         pruneArmedView();
+        updateGuildGate();
 
         // Quiet pass while navigating (after View or after reverting)
         if (isArmedView(channelId)) {
@@ -226,20 +256,115 @@ function onChannelSelect(event: { guildId: string | null; channelId: string | nu
             hideOverlay();
         }
 
-        if (!shouldConfirmView(channelId)) {
-            lastChannel = { guildId: event?.guildId ?? null, channelId };
-            safeChannel = { guildId: event?.guildId ?? null, channelId };
+        if (channelBlocked(channelId)) {
+            // A whole-server gate covers every channel in it
+            if (guildBlocksChannel(channelId)) {
+                lastChannel = { guildId: event?.guildId ?? null, channelId };
+                return;
+            }
+            if (viewGate?.channelId === channelId) return;
+            // Fallback for navigation that did not come from a sidebar click
+            // (keyboard, notifications, etc): bounce back to a safe channel.
+            showViewGate(channelId, true);
             return;
         }
 
-        if (viewGate?.channelId === channelId) return;
-
-        // Fallback for navigation that did not come from a sidebar click
-        // (keyboard, notifications, etc): bounce back to a safe channel.
-        showViewGate(channelId, true);
+        lastChannel = { guildId: event?.guildId ?? null, channelId };
+        safeChannel = { guildId: event?.guildId ?? null, channelId };
     } catch {
         viewGate = null;
         hideOverlay();
+    }
+}
+
+// ---- Whole-guild gate ----
+
+let guildGateId: string | null = null;
+let guildArmedId: string | null = null;
+
+function currentGuildId(): string | null {
+    try {
+        return SelectedGuildStore.getGuildId() ?? null;
+    } catch {
+        return null;
+    }
+}
+
+function guildName(guildId: string): string {
+    try {
+        return GuildStore.getGuild(guildId)?.name ?? "this server";
+    } catch {
+        return "this server";
+    }
+}
+
+function guildOfChannel(channelId: string): string | null {
+    return getChannel(channelId)?.guild_id ?? null;
+}
+
+// True while a gated server is open but not yet confirmed by the user.
+function guildBlocksChannel(channelId: string): boolean {
+    const guildId = guildOfChannel(channelId);
+    if (!guildId) return false;
+    if (!settings.store.gatesEnabled || !guildViewGated(guildId)) return false;
+    return guildArmedId !== guildId;
+}
+
+// Whether opening this channel should be gated, accounting for whole-server gating.
+function channelBlocked(channelId: string): boolean {
+    if (!settings.store.gatesEnabled) return false;
+    const guildId = guildOfChannel(channelId);
+    if (guildId != null && guildViewGated(guildId)) return guildArmedId !== guildId;
+    return shouldConfirmView(channelId);
+}
+
+function showGuildGate(guildId: string) {
+    showOverlay(
+        <GateScreen
+            label={guildName(guildId)}
+            sub="This whole server is hidden until you confirm."
+            confirmText="View Server"
+            onView={() => {
+                guildArmedId = guildId;
+                guildGateId = null;
+                hideOverlay();
+            }}
+            onCancel={() => {
+                guildGateId = null;
+                hideOverlay();
+                const back = safeTarget();
+                if (back != null) {
+                    armView(back);
+                    navigateToChannel(back);
+                }
+            }}
+        />,
+        "guild"
+    );
+}
+
+// Keeps the whole-guild gate in sync with the currently selected server.
+function updateGuildGate() {
+    try {
+        const guildId = currentGuildId();
+        if (guildArmedId && guildArmedId !== guildId) guildArmedId = null;
+
+        const shouldGate = settings.store.gatesEnabled
+            && guildId != null
+            && guildViewGated(guildId)
+            && guildArmedId !== guildId;
+
+        if (shouldGate) {
+            if (guildGateId !== guildId || overlayMode !== "guild") {
+                guildGateId = guildId;
+                showGuildGate(guildId!);
+            }
+        } else if (guildGateId != null) {
+            guildGateId = null;
+            if (overlayMode === "guild") hideOverlay();
+        }
+    } catch {
+        // ignore
     }
 }
 
@@ -301,11 +426,16 @@ function onDocumentClick(event: MouseEvent) {
 
         const channelId = match[1];
         if (isVoiceish(getChannel(channelId))) return;
-        if (!shouldConfirmView(channelId)) return;
+        if (!channelBlocked(channelId)) return;
 
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation();
+
+        if (guildBlocksChannel(channelId)) {
+            updateGuildGate();
+            return;
+        }
 
         showViewGate(channelId, false);
     } catch {
@@ -425,6 +555,8 @@ export default definePlugin({
         FluxDispatcher.subscribe("VOICE_CHANNEL_SELECT", onVoiceChannelSelect);
         document.addEventListener("click", onDocumentClick, true);
         this.preSend = addMessagePreSendListener(sendListener);
+        updateGuildGate();
+        this.guildTimer = window.setInterval(updateGuildGate, 300);
     },
 
     stop() {
@@ -432,10 +564,13 @@ export default definePlugin({
         FluxDispatcher.unsubscribe("VOICE_CHANNEL_SELECT", onVoiceChannelSelect);
         document.removeEventListener("click", onDocumentClick, true);
         if (this.preSend) removeMessagePreSendListener(this.preSend);
+        if (this.guildTimer != null) clearInterval(this.guildTimer);
         pendingGateKeys.clear();
         pendingSend = false;
         viewGate = null;
         safeChannel = null;
+        guildGateId = null;
+        guildArmedId = null;
         currentVoiceModalChannel = null;
         hideOverlay();
     },
