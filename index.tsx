@@ -16,7 +16,7 @@ import definePlugin from "@utils/types";
 import { findByPropsLazy, findCssClassesLazy } from "@webpack";
 import { ChannelRouter, ConfirmModal, createRoot, FluxDispatcher, openModal, SelectedChannelStore } from "@webpack/common";
 
-import { channelLabel, gatedForRow, shouldConfirmSend, shouldConfirmView, shouldConfirmVoice } from "./gates";
+import { channelLabel, gatedForRow, getChannel, isVoiceish, shouldConfirmSend, shouldConfirmView, shouldConfirmVoice } from "./gates";
 import { settings } from "./settings";
 
 const cl = classNameFactory("vc-htb-");
@@ -234,42 +234,82 @@ function onChannelSelect(event: { guildId: string | null; channelId: string | nu
 
         if (viewGate?.channelId === channelId) return;
 
-        const prevChannelId = safeTarget();
-        viewGate = { channelId };
-
-        // Never open the gated channel itself; stay on the last safe channel
-        if (prevChannelId != null && prevChannelId !== channelId) {
-            armView(prevChannelId);
-            navigateToChannel(prevChannelId);
-        }
-
-        const label = channelLabel(channelId);
-
-        showOverlay(
-            <GateScreen
-                label={label}
-                onView={() => {
-                    if (viewGate?.channelId !== channelId) return;
-                    viewGate = null;
-                    hideOverlay();
-                    armView(channelId);
-                    navigateToChannel(channelId);
-                }}
-                onCancel={() => {
-                    const back = safeTarget();
-                    if (back != null && back !== channelId) {
-                        if (viewGate?.channelId === channelId) viewGate = null;
-                        hideOverlay();
-                        armView(back);
-                        navigateToChannel(back);
-                    }
-                    // else: nowhere safe to return to, keep the gate up
-                }}
-            />
-        );
+        // Fallback for navigation that did not come from a sidebar click
+        // (keyboard, notifications, etc): bounce back to a safe channel.
+        showViewGate(channelId, true);
     } catch {
         viewGate = null;
         hideOverlay();
+    }
+}
+
+// Show the view gate for a channel. When `revert` is set, the gated channel
+// has already been navigated to, so we bounce back to the last safe channel.
+// Sidebar clicks pass revert=false because the click is blocked up front.
+function showViewGate(channelId: string, revert: boolean) {
+    if (viewGate?.channelId === channelId) return;
+    viewGate = { channelId };
+
+    if (revert) {
+        const back = safeTarget();
+        if (back != null && back !== channelId) {
+            armView(back);
+            navigateToChannel(back);
+        }
+    }
+
+    const label = channelLabel(channelId);
+
+    showOverlay(
+        <GateScreen
+            label={label}
+            onView={() => {
+                if (viewGate?.channelId !== channelId) return;
+                viewGate = null;
+                hideOverlay();
+                armView(channelId);
+                navigateToChannel(channelId);
+            }}
+            onCancel={() => {
+                if (viewGate?.channelId === channelId) viewGate = null;
+                hideOverlay();
+                // If we somehow ended up on another gated channel, move to safety
+                const current = SelectedChannelStore.getChannelId();
+                if (current && current !== channelId && shouldConfirmView(current)) {
+                    const back = safeTarget();
+                    if (back != null && back !== current) {
+                        armView(back);
+                        navigateToChannel(back);
+                    }
+                }
+            }}
+        />
+    );
+}
+
+// Block sidebar clicks on gated channels before Discord's own handler runs, so
+// the channel is never opened in the first place (no flash, no revert).
+function onDocumentClick(event: MouseEvent) {
+    try {
+        const target = event.target as HTMLElement | null;
+        const item = target?.closest?.("[data-list-item-id]") as HTMLElement | null;
+        if (!item) return;
+
+        const raw = item.getAttribute("data-list-item-id") ?? "";
+        const match = raw.match(/(\d+)$/);
+        if (!match) return;
+
+        const channelId = match[1];
+        if (isVoiceish(getChannel(channelId))) return;
+        if (!shouldConfirmView(channelId)) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+
+        showViewGate(channelId, false);
+    } catch {
+        // ignore
     }
 }
 
@@ -383,12 +423,14 @@ export default definePlugin({
 
         FluxDispatcher.subscribe("CHANNEL_SELECT", onChannelSelect);
         FluxDispatcher.subscribe("VOICE_CHANNEL_SELECT", onVoiceChannelSelect);
+        document.addEventListener("click", onDocumentClick, true);
         this.preSend = addMessagePreSendListener(sendListener);
     },
 
     stop() {
         FluxDispatcher.unsubscribe("CHANNEL_SELECT", onChannelSelect);
         FluxDispatcher.unsubscribe("VOICE_CHANNEL_SELECT", onVoiceChannelSelect);
+        document.removeEventListener("click", onDocumentClick, true);
         if (this.preSend) removeMessagePreSendListener(this.preSend);
         pendingGateKeys.clear();
         pendingSend = false;
