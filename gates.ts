@@ -88,6 +88,8 @@ export function viewGated(channelId: string): boolean {
 
 export function sendGated(channelId: string): boolean {
     const s = settings.store;
+    // A channel gated for viewing is also gated for sending
+    if (viewGated(channelId)) return true;
     if (!s.confirmSend) return false;
     if (toSet(s.sendChannels).has(channelId)) return true;
     const ch = getChannel(channelId);
