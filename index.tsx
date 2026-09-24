@@ -21,6 +21,7 @@ import { settings } from "./settings";
 
 const cl = classNameFactory("vc-htb-");
 const ChannelListClasses = findCssClassesLazy("icon");
+const MessagesClasses = findCssClassesLazy("messagesWrapper");
 const VoiceActions = findByPropsLazy("selectVoiceChannel", "selectChannel");
 
 const WarningIcon = ErrorBoundary.wrap(() => (
@@ -93,7 +94,7 @@ interface PrevChannel {
 }
 
 let lastChannel: PrevChannel = { guildId: null, channelId: null };
-let booted = false;
+let viewGate: { channelId: string } | null = null;
 
 const armedView = new Map<string, number>();
 
@@ -115,8 +116,6 @@ function pruneArmedView() {
     }
 }
 
-let viewGate: { channelId: string } | null = null;
-
 function navigateToChannel(channelId: string) {
     setTimeout(() => {
         try {
@@ -127,10 +126,11 @@ function navigateToChannel(channelId: string) {
     }, 0);
 }
 
-// ---- Opaque, NSFW-style gate overlay covering the whole window ----
+// ---- Opaque, NSFW-style gate overlay covering just the messages container ----
 
 let overlayRoot: ReturnType<typeof createRoot> | null = null;
 let overlayContainer: HTMLDivElement | null = null;
+let overlayPositionTimer: number | null = null;
 
 function lockMessages() {
     document.documentElement.classList.add("vc-htb-locked");
@@ -140,7 +140,23 @@ function unlockMessages() {
     document.documentElement.classList.remove("vc-htb-locked");
 }
 
+function positionOverlay() {
+    if (!overlayContainer) return;
+    const target = document.querySelector<HTMLElement>(`div.${MessagesClasses.messagesWrapper}`);
+    if (!target) return;
+    const r = target.getBoundingClientRect();
+    overlayContainer.style.left = `${r.left}px`;
+    overlayContainer.style.top = `${r.top}px`;
+    overlayContainer.style.width = `${r.width}px`;
+    overlayContainer.style.height = `${r.height}px`;
+}
+
 function hideOverlay() {
+    if (overlayPositionTimer != null) {
+        clearInterval(overlayPositionTimer);
+        overlayPositionTimer = null;
+    }
+    window.removeEventListener("resize", positionOverlay);
     overlayRoot?.unmount();
     overlayRoot = null;
     overlayContainer?.remove();
@@ -152,9 +168,13 @@ function showOverlay(content: React.ReactNode) {
     hideOverlay();
     lockMessages();
     overlayContainer = document.createElement("div");
+    overlayContainer.className = cl("gate-wrap");
     document.body.appendChild(overlayContainer);
     overlayRoot = createRoot(overlayContainer);
     overlayRoot.render(content);
+    positionOverlay();
+    overlayPositionTimer = window.setInterval(positionOverlay, 250);
+    window.addEventListener("resize", positionOverlay);
 }
 
 function GateScreen({ label, onView, onCancel }: { label: string; onView(): void; onCancel(): void }) {
@@ -183,12 +203,6 @@ function onChannelSelect(event: { guildId: string | null; channelId: string | nu
         if (typeof channelId !== "string") return;
 
         pruneArmedView();
-
-        if (!booted) {
-            booted = true;
-            lastChannel = { guildId: event?.guildId ?? null, channelId };
-            return;
-        }
 
         // Quiet pass while navigating (after View or after reverting)
         if (isArmedView(channelId)) {

@@ -6,9 +6,12 @@
 
 import type { Channel } from "@vencord/discord-types";
 import { ChannelType } from "@vencord/discord-types/enums";
-import { ApplicationStreamingStore, ChannelStore, UserStore, VoiceStateStore } from "@webpack/common";
+import { findStoreLazy } from "@webpack";
+import { ChannelStore, UserStore } from "@webpack/common";
 
 import { settings } from "./settings";
+
+const SortedGuildStore = findStoreLazy("SortedGuildStore");
 
 function parseList(raw: unknown): Set<string> {
     if (typeof raw !== "string") return new Set();
@@ -48,33 +51,25 @@ export function isVoiceish(ch: Channel | null | undefined): boolean {
     return ch?.type === ChannelType.GUILD_VOICE || ch?.type === ChannelType.GUILD_STAGE_VOICE;
 }
 
-export function inVoice(): boolean {
+export function getGuildFolderId(guildId: string | null | undefined): string | null {
+    if (!guildId) return null;
     try {
-        const me = UserStore.getCurrentUser();
-        if (!me) return false;
-        return VoiceStateStore.getVoiceStateForUser(me.id)?.channelId != null;
+        const folder = SortedGuildStore.getGuildFolders().find(f => f.guildIds?.includes(guildId));
+        return folder?.folderId != null ? String(folder.folderId) : null;
     } catch {
-        return false;
+        return null;
     }
 }
 
-export function streaming(): boolean {
-    try {
-        return ApplicationStreamingStore.getCurrentUserActiveStream() != null;
-    } catch {
-        return false;
-    }
-}
-
-function bypassActive(): boolean {
-    const s = settings.store;
-    if (!s.bypassInVoice) return false;
-    if (!inVoice()) return false;
-    return !s.bypassOnlyStreaming || streaming();
+function folderGated(guildId: string | null | undefined, raw: unknown): boolean {
+    const folders = toSet(raw);
+    if (folders.size === 0) return false;
+    const folderId = getGuildFolderId(guildId);
+    return folderId != null && folders.has(folderId);
 }
 
 function gatesOn(): boolean {
-    return settings.store.gatesEnabled && !bypassActive();
+    return settings.store.gatesEnabled;
 }
 
 export function viewGated(channelId: string): boolean {
@@ -84,7 +79,11 @@ export function viewGated(channelId: string): boolean {
     const ch = getChannel(channelId);
     if (!ch) return false;
     if (isDMish(ch)) return s.confirmDms;
-    return ch.guild_id != null && toSet(s.viewGuilds).has(ch.guild_id);
+    if (ch.guild_id != null) {
+        if (toSet(s.viewGuilds).has(ch.guild_id)) return true;
+        if (folderGated(ch.guild_id, s.viewFolders)) return true;
+    }
+    return false;
 }
 
 export function sendGated(channelId: string): boolean {
@@ -94,7 +93,11 @@ export function sendGated(channelId: string): boolean {
     const ch = getChannel(channelId);
     if (!ch) return false;
     if (isDMish(ch)) return s.confirmDms;
-    return ch.guild_id != null && toSet(s.sendGuilds).has(ch.guild_id);
+    if (ch.guild_id != null) {
+        if (toSet(s.sendGuilds).has(ch.guild_id)) return true;
+        if (folderGated(ch.guild_id, s.sendFolders)) return true;
+    }
+    return false;
 }
 
 export function shouldConfirmView(channelId: string): boolean {
