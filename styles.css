@@ -28,6 +28,34 @@
     font-weight: 600;
 }
 
+.vc-htb-gate {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 24px;
+    background: var(--background-primary);
+    text-align: center;
+}
+
+.vc-htb-gate-icon {
+    color: var(--status-danger);
+}
+
+.vc-htb-gate-title {
+    font-size: 20px;
+    font-weight: 700;
+    word-break: break-word;
+}
+
+.vc-htb-gate-sub {
+    opacity: .8;
+}
+
 [class*="containerDefault"]:has(.vc-htb-warnicon) {
     background: color-mix(in srgb, var(--status-danger) 8%, transparent);
     border-radius: 4px;

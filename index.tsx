@@ -7,14 +7,14 @@
 import "./styles.css";
 
 import { addMessagePreSendListener, type MessageSendListener,removeMessagePreSendListener } from "@api/MessageEvents";
+import { Button } from "@components/Button";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Paragraph } from "@components/Paragraph";
 import { classNameFactory } from "@utils/css";
 import { classes } from "@utils/misc";
 import definePlugin from "@utils/types";
 import { findByPropsLazy, findCssClassesLazy } from "@webpack";
-import { ChannelRouter, ConfirmModal, FluxDispatcher, openModal, SelectedChannelStore } from "@webpack/common";
-import type { ReactNode } from "react";
+import { ChannelRouter, ConfirmModal, createRoot, FluxDispatcher, openModal, SelectedChannelStore } from "@webpack/common";
 
 import { channelLabel, gatedForRow, shouldConfirmSend, shouldConfirmView, shouldConfirmVoice } from "./gates";
 import { settings } from "./settings";
@@ -36,7 +36,7 @@ const WarningIcon = ErrorBoundary.wrap(() => (
     </svg>
 ), { noop: true });
 
-function WarningBody({ children }: { children: ReactNode }) {
+function WarningBody({ children }: { children: React.ReactNode }) {
     return <div className={cl("warnbox")}>{children}</div>;
 }
 
@@ -44,7 +44,7 @@ interface GateOptions {
     key: string;
     title: string;
     confirmText: string;
-    body: ReactNode;
+    body: React.ReactNode;
     onOk(): void;
     onKo?(): void;
 }
@@ -93,15 +93,78 @@ interface PrevChannel {
 }
 
 let lastChannel: PrevChannel = { guildId: null, channelId: null };
-let viewArmedChannel: string | null = null;
-let currentViewModalChannel: string | null = null;
+let booted = false;
+
+const armedView = new Map<string, number>();
+
+function armView(id: string) {
+    armedView.set(id, Date.now());
+}
+
+function isArmedView(id: string): boolean {
+    const at = armedView.get(id);
+    if (at == null) return false;
+    armedView.delete(id);
+    return Date.now() - at < 10000;
+}
+
+function pruneArmedView() {
+    const now = Date.now();
+    for (const [id, at] of armedView) {
+        if (now - at > 10000) armedView.delete(id);
+    }
+}
+
+let viewGate: { channelId: string } | null = null;
 
 function navigateToChannel(channelId: string) {
-    try {
-        ChannelRouter.transitionToChannel(channelId);
-    } catch {
-        // ignore navigation failures
-    }
+    setTimeout(() => {
+        try {
+            ChannelRouter.transitionToChannel(channelId);
+        } catch {
+            // ignore navigation failures
+        }
+    }, 0);
+}
+
+// ---- Opaque, NSFW-style gate overlay covering the whole window ----
+
+let overlayRoot: ReturnType<typeof createRoot> | null = null;
+let overlayContainer: HTMLDivElement | null = null;
+
+function hideOverlay() {
+    overlayRoot?.unmount();
+    overlayRoot = null;
+    overlayContainer?.remove();
+    overlayContainer = null;
+}
+
+function showOverlay(content: React.ReactNode) {
+    hideOverlay();
+    overlayContainer = document.createElement("div");
+    document.body.appendChild(overlayContainer);
+    overlayRoot = createRoot(overlayContainer);
+    overlayRoot.render(content);
+}
+
+function GateScreen({ label, onView, onCancel }: { label: string; onView(): void; onCancel(): void }) {
+    return (
+        <div className={cl("gate")}>
+            <svg className={cl("gate-icon")} height="48" width="48" viewBox="0 0 24 24" aria-hidden={true} role="img">
+                <path fill="currentColor" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2V9h2v5z" />
+            </svg>
+            <div className={cl("gate-title")}>View {label}?</div>
+            <div className={cl("gate-sub")}>This channel needs confirmation before opening.</div>
+            <div className={cl("row")}>
+                <Button variant="dangerPrimary" onClick={onView}>
+                    View Channel
+                </Button>
+                <Button variant="secondary" onClick={onCancel}>
+                    Cancel
+                </Button>
+            </div>
+        </div>
+    );
 }
 
 function onChannelSelect(event: { guildId: string | null; channelId: string | null }) {
@@ -109,39 +172,71 @@ function onChannelSelect(event: { guildId: string | null; channelId: string | nu
         const channelId = event?.channelId;
         if (typeof channelId !== "string") return;
 
-        const prevChannelId = lastChannel.channelId;
-        lastChannel = { guildId: event?.guildId ?? null, channelId };
+        pruneArmedView();
 
-        if (viewArmedChannel === channelId) {
-            viewArmedChannel = null;
+        if (!booted) {
+            booted = true;
+            lastChannel = { guildId: event?.guildId ?? null, channelId };
             return;
         }
-        if (currentViewModalChannel === channelId) return;
-        if (!shouldConfirmView(channelId)) return;
 
-        currentViewModalChannel = channelId;
-        setTimeout(() => {
-            showGate({
-                key: `view:${channelId}`,
-                title: `View ${channelLabel(channelId)}?`,
-                confirmText: "View",
-                body: <Paragraph>This channel needs confirmation every time you open it.</Paragraph>,
-                onOk: () => {
-                    if (currentViewModalChannel === channelId) currentViewModalChannel = null;
-                },
-                onKo: () => {
-                    if (currentViewModalChannel === channelId) currentViewModalChannel = null;
+        // Quiet pass while navigating (after View or after reverting)
+        if (isArmedView(channelId)) {
+            lastChannel = { guildId: event?.guildId ?? null, channelId };
+            return;
+        }
+
+        // User navigated elsewhere while a gate was up
+        if (viewGate != null && viewGate.channelId !== channelId) {
+            viewGate = null;
+            hideOverlay();
+        }
+
+        if (!shouldConfirmView(channelId)) {
+            lastChannel = { guildId: event?.guildId ?? null, channelId };
+            return;
+        }
+
+        if (viewGate?.channelId === channelId) return;
+
+        const prevChannelId = lastChannel.channelId ?? null;
+        viewGate = { channelId };
+
+        // Never open the gated channel itself; stay on the previous one
+        if (prevChannelId != null && prevChannelId !== channelId) {
+            armView(prevChannelId);
+            navigateToChannel(prevChannelId);
+        }
+
+        const label = channelLabel(channelId);
+
+        showOverlay(
+            <GateScreen
+                label={label}
+                onView={() => {
+                    if (viewGate?.channelId !== channelId) return;
+                    viewGate = null;
+                    hideOverlay();
+                    armView(channelId);
+                    navigateToChannel(channelId);
+                }}
+                onCancel={() => {
+                    if (viewGate?.channelId === channelId) viewGate = null;
+                    hideOverlay();
                     if (prevChannelId != null && prevChannelId !== channelId) {
-                        viewArmedChannel = prevChannelId;
+                        armView(prevChannelId);
                         navigateToChannel(prevChannelId);
                     }
-                }
-            });
-        }, 0);
+                }}
+            />
+        );
     } catch {
-        currentViewModalChannel = null;
+        viewGate = null;
+        hideOverlay();
     }
 }
+
+// ---- Voice gating (modal based; cancelling leaves the voice channel) ----
 
 let voiceArmedChannel: string | null = null;
 let currentVoiceModalChannel: string | null = null;
@@ -187,6 +282,8 @@ function onVoiceChannelSelect(event: { channelId: string | null }) {
         currentVoiceModalChannel = null;
     }
 }
+
+// ---- Send gate ----
 
 let pendingSend = false;
 
@@ -257,8 +354,9 @@ export default definePlugin({
         if (this.preSend) removeMessagePreSendListener(this.preSend);
         pendingGateKeys.clear();
         pendingSend = false;
-        currentViewModalChannel = null;
+        viewGate = null;
         currentVoiceModalChannel = null;
+        hideOverlay();
     },
 
     isGatedRow(channel: any): boolean {
