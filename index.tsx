@@ -14,7 +14,7 @@ import { classNameFactory } from "@utils/css";
 import { classes } from "@utils/misc";
 import definePlugin from "@utils/types";
 import { findByPropsLazy, findCssClassesLazy } from "@webpack";
-import { ChannelRouter, ConfirmModal, createRoot, FluxDispatcher, GuildStore, openModal, SelectedChannelStore, SelectedGuildStore } from "@webpack/common";
+import { ChannelRouter, ConfirmModal, createRoot, FluxDispatcher, GuildStore, openModal, SelectedChannelStore, SelectedGuildStore, useState } from "@webpack/common";
 
 import { channelLabel, gatedForRow, getChannel, guildViewGated, isVoiceish, shouldConfirmSend, shouldConfirmView, shouldConfirmVoice } from "./gates";
 import { settings } from "./settings";
@@ -23,6 +23,29 @@ const cl = classNameFactory("vc-htb-");
 const ChannelListClasses = findCssClassesLazy("icon");
 const MessagesClasses = findCssClassesLazy("messagesWrapper");
 const VoiceActions = findByPropsLazy("selectVoiceChannel", "selectChannel");
+
+const NoteReveal = ErrorBoundary.wrap(function NoteReveal({ children }: { children: React.ReactNode; }) {
+    const [open, setOpen] = useState(() => !settings.store.hideNotes);
+
+    if (!settings.store.hideNotes || open) {
+        return <>{children}</>;
+    }
+
+    return (
+        <button
+            type="button"
+            className={cl("note-reveal")}
+            onClick={() => setOpen(true)}
+        >
+            Click to show note
+        </button>
+    );
+}, { noop: true });
+
+function noteReveal(userId: string, children: React.ReactNode) {
+    // key resets reveal when the profile switches user without a full unmount
+    return <NoteReveal key={userId}>{children}</NoteReveal>;
+}
 
 const WarningIcon = ErrorBoundary.wrap(() => (
     <svg
@@ -275,6 +298,13 @@ function onChannelSelect(event: { guildId: string | null; channelId: string | nu
         if (typeof channelId !== "string") return;
 
         pruneArmedView();
+
+        // Arrived at the safe channel we navigated to: drop the overlay only now
+        if (leaveTo != null && channelId === leaveTo) {
+            clearLeave();
+            hideOverlay();
+        }
+
         updateGuildGate();
 
         // Quiet pass while navigating (after View or after reverting)
@@ -314,6 +344,41 @@ function onChannelSelect(event: { guildId: string | null; channelId: string | nu
 
 let guildGateId: string | null = null;
 let guildArmedId: string | null = null;
+
+// Navigation-away state. While set, the current gate overlay is kept up so the
+// gated content is never briefly revealed between hiding the overlay and the
+// new channel actually being selected.
+let leaveTo: string | null = null;
+let leaveTimer: number | null = null;
+
+function clearLeave() {
+    leaveTo = null;
+    if (leaveTimer != null) {
+        clearTimeout(leaveTimer);
+        leaveTimer = null;
+    }
+}
+
+function leaveToSafe(back: string | null) {
+    if (back == null) {
+        hideOverlay();
+        return;
+    }
+    clearLeave();
+    leaveTo = back;
+    armView(back);
+    navigateToChannel(back);
+    // Safety net: if the channel never changes, fall back to normal gating
+    // instead of leaving a stuck overlay.
+    leaveTimer = window.setTimeout(() => {
+        leaveTimer = null;
+        if (leaveTo == null) return;
+        leaveTo = null;
+        const g = currentGuildId();
+        if (g != null && guildViewGated(g) && guildArmedId !== g) updateGuildGate();
+        else hideOverlay();
+    }, 2000);
+}
 
 function currentGuildId(): string | null {
     try {
@@ -364,12 +429,7 @@ function showGuildGate(guildId: string) {
             }}
             onCancel={() => {
                 guildGateId = null;
-                hideOverlay();
-                const back = safeTarget();
-                if (back != null) {
-                    armView(back);
-                    navigateToChannel(back);
-                }
+                leaveToSafe(safeTarget());
             }}
         />,
         "guild"
@@ -379,6 +439,8 @@ function showGuildGate(guildId: string) {
 // Keeps the whole-guild gate in sync with the currently selected server.
 function updateGuildGate() {
     try {
+        // Don't fight an in-progress navigation away from a gated server
+        if (leaveTo != null) return;
         const guildId = currentGuildId();
         if (guildArmedId && guildArmedId !== guildId) guildArmedId = null;
 
@@ -430,16 +492,19 @@ function showViewGate(channelId: string, revert: boolean) {
             }}
             onCancel={() => {
                 if (viewGate?.channelId === channelId) viewGate = null;
-                hideOverlay();
                 // If we somehow ended up on another gated channel, move to safety
                 const current = SelectedChannelStore.getChannelId();
                 if (current && current !== channelId && shouldConfirmView(current)) {
                     const back = safeTarget();
                     if (back != null && back !== current) {
+                        // Keep the overlay up while navigating; onChannelSelect
+                        // removes it once we arrive.
                         armView(back);
                         navigateToChannel(back);
+                        return;
                     }
                 }
+                hideOverlay();
             }}
         />
     );
@@ -592,7 +657,7 @@ const sendListener: MessageSendListener = (channelId, _message, _options, _props
 
 export default definePlugin({
     name: "HideTheBody",
-    description: "Confirm before viewing gated channels, joining voice, starting calls or sending messages.",
+    description: "Confirm before viewing gated channels, joining voice, starting calls or sending messages. Optionally hide notes on user profiles.",
     authors: [{ name: "Jalolek", id: 1156907087431991306n }],
     tags: ["Servers", "Voice"],
     settings,
@@ -603,6 +668,15 @@ export default definePlugin({
             replacement: {
                 match: /(?<=(\i)\.isNSFW\(\);)switch\(\i\.type\).{0,15}\.GUILD_ANNOUNCEMENT/,
                 replace: (m, channel) => `if($self.isGatedRow(${channel}))return $self.WarningIcon;${m}`
+            }
+        },
+        // Keep the Note section; wrap it so the editor is behind a click-to-reveal control.
+        // One replacement only: a two-step wrap leaves noteReveal( unclosed and eval rejects the factory.
+        {
+            find: "UserProfileModalV2NotesSection",
+            replacement: {
+                match: new RegExp(`("UserProfileModalV2NotesSection"\\),(\\i)=(\\i)\\?(\\i):(\\i)\\.A;return)(\\(0,\\i\\.jsx\\)\\(\\i,\\{.+?action:"SET_NOTE"${"\\}\\)".repeat(3)})`),
+                replace: "$1 $self.noteReveal(arguments[0].userId,$6)"
             }
         }
     ],
@@ -647,6 +721,7 @@ export default definePlugin({
         safeChannel = null;
         guildGateId = null;
         guildArmedId = null;
+        clearLeave();
         currentVoiceModalChannel = null;
         hideOverlay();
     },
@@ -659,6 +734,9 @@ export default definePlugin({
             return false;
         }
     },
+
+    NoteReveal,
+    noteReveal,
 
     WarningIcon
 });

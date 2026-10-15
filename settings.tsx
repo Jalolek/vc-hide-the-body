@@ -202,6 +202,11 @@ export const settings = definePluginSettings({
         default: true,
         description: "Confirm before starting calls"
     },
+    hideNotes: {
+        type: OptionType.BOOLEAN,
+        default: false,
+        description: "Hide notes on user profiles until you click to show them"
+    },
     dmGateMigrated: {
         type: OptionType.BOOLEAN,
         default: false,

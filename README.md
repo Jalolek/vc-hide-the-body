@@ -28,6 +28,8 @@ visible and nothing can slip through while it is up.
   channel no longer selects or reveals it, but the context menu still opens
   so you can reach `Edit Channel` and other settings.
 - Gated channels are marked with a red warning icon in the channel list.
+- Optional note hide: profile notes stay behind a click-to-show control and
+  hide again when you close the profile.
 
 ## How gating works
 
@@ -54,6 +56,7 @@ All settings live under `Settings > Plugins > HideTheBody`.
 | Confirm before opening or sending in ALL DMs | Gate every direct message. Individual DMs can still be gated by channel ID. |
 | Confirm before joining a voice channel | Gate voice channels. |
 | Confirm before starting calls | Gate calls. |
+| Hide notes on user profiles until you click to show them | Replaces the note editor with a click-to-show control while the profile is open. |
 | Quick controls | Buttons to gate the current channel, server or folder and to remove gates without copying IDs. |
 
 The ID lists accept values separated by commas, spaces or newlines.
@@ -92,10 +95,10 @@ pnpm inject
 
 | File | Purpose |
 | --- | --- |
-| `index.tsx` | Plugin entry point, gate overlays, click and selection blocking, send, voice and call gates. |
+| `index.tsx` | Plugin entry point, gate overlays, click and selection blocking, send, voice and call gates, optional note reveal. |
 | `gates.ts` | Gating logic: channel, server, folder and DM checks. |
 | `settings.tsx` | Settings definition and the quick controls panel. |
-| `styles.css` | Styling for the settings panel and gate overlay. |
+| `styles.css` | Styling for the settings panel, gate overlay and note reveal control. |
 
 ## Notes
 
