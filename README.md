@@ -28,8 +28,8 @@ visible and nothing can slip through while it is up.
   channel no longer selects or reveals it, but the context menu still opens
   so you can reach `Edit Channel` and other settings.
 - Gated channels are marked with a red warning icon in the channel list.
-- Optional note hide: profile notes stay behind a click-to-show control and
-  hide again when you close the profile.
+- Note hide (on by default): profile notes stay behind a click-to-show
+  control and hide again when you close the profile.
 
 ## How gating works
 
@@ -95,7 +95,7 @@ pnpm inject
 
 | File | Purpose |
 | --- | --- |
-| `index.tsx` | Plugin entry point, gate overlays, click and selection blocking, send, voice and call gates, optional note reveal. |
+| `index.tsx` | Plugin entry point, gate overlays, click and selection blocking, send, voice and call gates, note reveal. |
 | `gates.ts` | Gating logic: channel, server, folder and DM checks. |
 | `settings.tsx` | Settings definition and the quick controls panel. |
 | `styles.css` | Styling for the settings panel, gate overlay and note reveal control. |

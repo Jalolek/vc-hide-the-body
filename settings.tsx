@@ -204,7 +204,7 @@ export const settings = definePluginSettings({
     },
     hideNotes: {
         type: OptionType.BOOLEAN,
-        default: false,
+        default: true,
         description: "Hide notes on user profiles until you click to show them"
     },
     dmGateMigrated: {

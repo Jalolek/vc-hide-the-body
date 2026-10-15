@@ -43,7 +43,6 @@ const NoteReveal = ErrorBoundary.wrap(function NoteReveal({ children }: { childr
 }, { noop: true });
 
 function noteReveal(userId: string, children: React.ReactNode) {
-    // key resets reveal when the profile switches user without a full unmount
     return <NoteReveal key={userId}>{children}</NoteReveal>;
 }
 
@@ -299,7 +298,6 @@ function onChannelSelect(event: { guildId: string | null; channelId: string | nu
 
         pruneArmedView();
 
-        // Arrived at the safe channel we navigated to: drop the overlay only now
         if (leaveTo != null && channelId === leaveTo) {
             clearLeave();
             hideOverlay();
@@ -327,7 +325,7 @@ function onChannelSelect(event: { guildId: string | null; channelId: string | nu
             }
             if (viewGate?.channelId === channelId) return;
             // Fallback for navigation that did not come from a sidebar click
-            // (keyboard, notifications, etc): bounce back to a safe channel.
+            // (keyboard, notifications, links): bounce back to a safe channel.
             showViewGate(channelId, true);
             return;
         }
@@ -345,9 +343,7 @@ function onChannelSelect(event: { guildId: string | null; channelId: string | nu
 let guildGateId: string | null = null;
 let guildArmedId: string | null = null;
 
-// Navigation-away state. While set, the current gate overlay is kept up so the
-// gated content is never briefly revealed between hiding the overlay and the
-// new channel actually being selected.
+// Target channel while Cancel navigates away; overlay stays until we land.
 let leaveTo: string | null = null;
 let leaveTimer: number | null = null;
 
@@ -368,8 +364,7 @@ function leaveToSafe(back: string | null) {
     leaveTo = back;
     armView(back);
     navigateToChannel(back);
-    // Safety net: if the channel never changes, fall back to normal gating
-    // instead of leaving a stuck overlay.
+    // If select never fires, clear the stuck overlay after 2s.
     leaveTimer = window.setTimeout(() => {
         leaveTimer = null;
         if (leaveTo == null) return;
@@ -439,7 +434,7 @@ function showGuildGate(guildId: string) {
 // Keeps the whole-guild gate in sync with the currently selected server.
 function updateGuildGate() {
     try {
-        // Don't fight an in-progress navigation away from a gated server
+        // Skip while leaveToSafe is navigating away
         if (leaveTo != null) return;
         const guildId = currentGuildId();
         if (guildArmedId && guildArmedId !== guildId) guildArmedId = null;
@@ -497,8 +492,6 @@ function showViewGate(channelId: string, revert: boolean) {
                 if (current && current !== channelId && shouldConfirmView(current)) {
                     const back = safeTarget();
                     if (back != null && back !== current) {
-                        // Keep the overlay up while navigating; onChannelSelect
-                        // removes it once we arrive.
                         armView(back);
                         navigateToChannel(back);
                         return;
@@ -518,8 +511,7 @@ function onDocumentClick(event: MouseEvent) {
         const target = event.target as HTMLElement | null;
         if (!target) return;
 
-        // Never interfere with modals, menus, popouts or other layered UI
-        // (channel settings, context menus, etc)
+        // Skip modals, menus, popouts and other layered UI
         if (target.closest('[role="dialog"], [aria-modal="true"], [role="menu"], [role="menuitem"], [class*="layer_"], [class*="popout"]')) return;
 
         const item = target.closest("[data-list-item-id]") as HTMLElement | null;
@@ -657,7 +649,7 @@ const sendListener: MessageSendListener = (channelId, _message, _options, _props
 
 export default definePlugin({
     name: "HideTheBody",
-    description: "Confirm before viewing gated channels, joining voice, starting calls or sending messages. Optionally hide notes on user profiles.",
+    description: "Confirm before viewing gated channels, joining voice, starting calls or sending messages. Can hide notes on user profiles.",
     authors: [{ name: "Jalolek", id: 1156907087431991306n }],
     tags: ["Servers", "Voice"],
     settings,
@@ -670,8 +662,6 @@ export default definePlugin({
                 replace: (m, channel) => `if($self.isGatedRow(${channel}))return $self.WarningIcon;${m}`
             }
         },
-        // Keep the Note section; wrap it so the editor is behind a click-to-reveal control.
-        // One replacement only: a two-step wrap leaves noteReveal( unclosed and eval rejects the factory.
         {
             find: "UserProfileModalV2NotesSection",
             replacement: {
