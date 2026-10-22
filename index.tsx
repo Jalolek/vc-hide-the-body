@@ -231,10 +231,18 @@ function hideOverlay() {
         overlayPositionTimer = null;
     }
     window.removeEventListener("resize", positionOverlay);
-    overlayRoot?.unmount();
+    // Null refs first, then unmount, then remove host. Removing the container
+    // while React still owns its children triggers removeChild NotFoundError.
+    const dyingRoot = overlayRoot;
+    const dyingHost = overlayContainer;
     overlayRoot = null;
-    overlayContainer?.remove();
     overlayContainer = null;
+    try {
+        dyingRoot?.unmount();
+    } catch { /* ignore */ }
+    try {
+        dyingHost?.remove();
+    } catch { /* ignore */ }
     unlockMessages();
 }
 
